@@ -11,66 +11,64 @@ extern crate twitter_stream;
 use clap::{App, Arg};
 use futures::{Future, Stream};
 use json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use tokio_core::reactor::Core;
 use twitter_stream::TwitterStream;
 
-#[derive(Deserialize, Serialize)]
-struct Node {
-    kind: HashSet<Type>,
-    children: BTreeMap<String, Node>,
+#[derive(Default, Deserialize, Serialize)]
+struct TypeSet {
+    null: bool,
+    bool: bool,
+    number: bool,
+    string: bool,
+    array: Option<Box<TypeSet>>,
+    object: Option<Map>,
+    absent: bool,
 }
 
-#[derive(Eq, PartialEq, Hash, Deserialize, Serialize)]
-enum Type {
-    Absent,
-    Null,
-    Bool,
-    Number,
-    String,
-    Array(Box<Type>),
-    Object,
-}
+type Map = BTreeMap<String, TypeSet>;
 
-impl Node {
+impl TypeSet {
     fn new() -> Self {
-        Node {
-            kind: HashSet::new(),
-            children: BTreeMap::new(),
-        }
+        TypeSet::default()
     }
 
-    fn merge(&mut self, v: Value) {
-        self.kind.insert(Type::of(&v));
+    fn add_type_of(&mut self, v: Value) {
+        match v {
+            Value::Null => self.null = true,
+            Value::Bool(_) => self.bool = true,
+            Value::Number(_) => self.number = true,
+            Value::String(_) => self.string = true,
+            Value::Array(a) => {
+                let mut types = self.array.take().unwrap_or_else(Default::default);
 
-        if let Value::Object(m) = v {
-            for (k, n) in &mut self.children {
-                if ! m.contains_key(k) {
-                    n.kind.insert(Type::Absent);
+                if a.is_empty() {
+                    types.absent = true;
+                } else {
+                    for v in a {
+                        types.add_type_of(v);
+                    }
                 }
-            }
 
-            for (k, v) in m {
-                self.children.entry(k).or_insert_with(Node::new).merge(v);
-            }
-        }
-    }
-}
+                self.array = Some(types);
+            },
+            Value::Object(m) => {
+                let mut map = self.object.take().unwrap_or_else(Map::new);
 
-impl Type {
-    fn of(v: &Value) -> Self {
-        match *v {
-            Value::Null => Type::Null,
-            Value::Bool(_) => Type::Bool,
-            Value::Number(_) => Type::Number,
-            Value::String(_) => Type::String,
-            Value::Array(ref a) => a.first().map_or_else(
-                || Type::Array(Box::new(Type::Null)),
-                |v| Type::Array(Box::new(Type::of(v)))
-            ),
-            Value::Object(_) => Type::Object,
+                for (k, types) in &mut map {
+                    if ! m.contains_key(k) {
+                        types.absent = true;
+                    }
+                }
+
+                for (k, v) in m {
+                    map.entry(k).or_insert_with(TypeSet::new).add_type_of(v);
+                }
+
+                self.object = Some(map);
+            },
         }
     }
 }
@@ -98,7 +96,7 @@ fn main() {
     let mut root = matches.value_of("resume")
         .and_then(|f| File::open(f).ok())
         .and_then(|f| json::from_reader(f).ok())
-        .unwrap_or_else(Node::new);
+        .unwrap_or_else(TypeSet::new);
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
@@ -106,7 +104,7 @@ fn main() {
     {
         let fut = TwitterStream::sample(&token, &handle).flatten_stream().for_each(|json| {
             let json = json::from_str(&json).map_err(twitter_stream::Error::custom)?;
-            root.merge(json);
+            root.add_type_of(json);
             Ok(())
         });
 
