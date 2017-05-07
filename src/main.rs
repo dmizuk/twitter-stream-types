@@ -14,18 +14,39 @@ use json::Value;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
+use std::ops::Not;
 use tokio_core::reactor::Core;
 use twitter_stream::TwitterStream;
 
 #[derive(Default, Deserialize, Serialize)]
 struct TypeSet {
-    null: bool,
-    bool: bool,
-    number: bool,
-    string: bool,
-    array: Option<Box<TypeSet>>,
-    object: Option<Map>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Not::not")]
     absent: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Not::not")]
+    null: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Not::not")]
+    bool: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Not::not")]
+    number: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Not::not")]
+    string: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    array: Option<Box<TypeSet>>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    object: Option<Map>,
 }
 
 type Map = BTreeMap<String, TypeSet>;
