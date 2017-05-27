@@ -180,9 +180,10 @@ fn main() {
         });
 
         // Catch Ctrl-C to ensure graceful shutdown.
-        let ctrl_c = tokio_signal::ctrl_c(&handle).flatten_stream().into_future();
+        let ctrl_c = tokio_signal::ctrl_c(&handle).flatten_stream().into_future()
+            .map_err(|(e, _)| twitter_stream::Error::custom(e));
 
-        assert!(core.run(fut.select2(ctrl_c)).is_ok());
+        core.run(fut.select2(ctrl_c).map_err(|e| e.split().0)).unwrap();
     }
 
     root.write_to_file(&mut output).unwrap();
